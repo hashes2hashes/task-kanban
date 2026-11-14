@@ -20,6 +20,7 @@ Next.ja + Supabase で構築し、Vercel にデプロイする。
 | 言語 | TypeScript 5.9（strict） |
 | スタイリング | Tailwind CSS 4.3（`@tailwindcss/turbopack`） |
 | フォント | Geist / Geist Mono（`next/font/google`） |
+| データベース | Supabase（`@supabase/supabase-js`、`@supabase/ssr`） |
 | Lint | ESLint 9（`eslint-config-next`） |
 | テスト | Vitest 5、React Testing Library 16、jest-dom、jsdom |
 | ランタイム | Node.js 26 系（`@types/node` も 26 に合わせている） |
@@ -41,12 +42,16 @@ Next.ja + Supabase で構築し、Vercel にデプロイする。
 ```
 task-kanban/
 ├── src/
-│   └── app/               # App Router（ルーティング = ディレクトリ構成）
-│       ├── layout.tsx     # ルートレイアウト（フォント・globals.css の読み込み）
-│       ├── page.tsx       # トップページ（/）
-│       ├── page.test.tsx  # page.tsx のテスト（テストは対象の隣に置く）
-│       └── globals.css    # Tailwind の読み込みとテーマトークン
+│   ├── app/               # App Router（ルーティング = ディレクトリ構成）
+│   │   ├── layout.tsx     # ルートレイアウト（フォント・globals.css の読み込み）
+│   │   ├── page.tsx       # トップページ（/）
+│   │   ├── page.test.tsx  # page.tsx のテスト（テストは対象の隣に置く）
+│   │   └── globals.css    # Tailwind の読み込みとテーマトークン
+│   ├── lib/
+│   │   └── supabase/      # Supabase クライアントと接続確認（後述）
+│   └── instrumentation.ts # サーバー起動時フック（Supabase 接続確認）
 ├── public/                # 静的ファイル（/ 直下で配信）
+├── .env.example           # 環境変数のキー一覧（値は .env.local に書く）
 ├── next.config.ts         # Next.js 設定（Cache Components、Turbopack ルール）
 ├── vitest.config.mts      # Vitest 設定
 ├── vitest.setup.ts        # テスト共通セットアップ（jest-dom）
@@ -64,6 +69,20 @@ task-kanban/
 - **Partial Prefetching 有効**（`partialPrefetching: true`）。`<Link>` はデフォルトでルートの静的部分のみプリフェッチする。`cacheComponents` を外すと設定検証でエラーになる。
 - **Tailwind CSS v4 は Turbopack ローダー経由**（`@tailwindcss/turbopack`、`next.config.ts` の `turbopack.rules`）。PostCSS 設定ファイルはない。テーマトークンは `src/app/globals.css` の `@theme inline` で CSS 変数から定義。
 - レイアウトの props 型には Next.js が自動生成するグローバル型 `LayoutProps<"/">` を使っている（`src/app/layout.tsx`）。
+
+## Supabase
+
+- **プロジェクト**: `task-kanban`（ref: `sdtdbhubjlwxdmixgaeh`、ap-southeast-2、Postgres 17）。Supabase MCP のツールではこの ref を `project_id` に指定する。
+- **環境変数**: `NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`（`sb_publishable_...` 形式。旧 `ANON_KEY` は使わない）。キーは `.env.example` に、実際の値は `.env.local`（git 管理外）に書く。`.gitignore` は `.env*` を除外し、`!.env.example` だけを例外にしている。
+- **環境変数の読み込み**: 必ず `src/lib/supabase/env.ts` の `getSupabaseEnv()` を通す。未設定のときは、足りない変数名を含むエラーを投げる。`process.env.X!` の非 null アサーションは使わない。
+- **クライアントの使い分け**（どちらも `createClient()` という名前）:
+  - Server Component / Server Action / Route Handler では `@/lib/supabase/server`。`async` なので `await createClient()` で呼ぶ。`await cookies()` を使うので、リクエストごとに生成し、モジュールのグローバル変数に保持しない。
+  - Client Component では `@/lib/supabase/client`。
+  - Server Component からは Cookie を書けないため、`setAll` の例外は握りつぶしている。認証を導入してセッションを更新する必要が出たら、Proxy（`proxy.ts`）で `updateSession` を実装する。
+- **起動時の接続確認**: `src/instrumentation.ts` の `register()`（Node.js ランタイムのみ）が `checkSupabaseConnection()` を呼ぶ。この関数は、テーブルに依存しない `/auth/v1/health` に API キーを付けて叩き、URL とキーの両方を検証する（タイムアウト 5 秒）。**失敗時のみ** `console.error` でログを出し、成功時は何も出さない。
+- **接続確認の結果型**: `checkSupabaseConnection()` は例外を投げず、`{ ok: true, url } | { ok: false, reason }` を返す。
+- **テスト**: 環境変数は `vi.stubEnv`、通信は `vi.stubGlobal("fetch", ...)` でモックする。後片付けは `afterEach` で `vi.unstubAllEnvs()` / `vi.unstubAllGlobals()`（例: `src/lib/supabase/check-connection.test.ts`）。
+- **スキーマ変更**: Supabase MCP の `apply_migration` で行う。変更の前に `list_tables` で現状を確認する。型が必要になったら `generate_typescript_types` で生成する。
 
 ## テスト
 
