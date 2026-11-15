@@ -23,7 +23,7 @@ export async function createClient() {
           );
         } catch {
           // Server Component からは Cookie を書き込めないため無視する。
-          // セッション更新は Proxy 側で行う想定。
+          // トークンの更新は Proxy（src/proxy.ts → updateSession）で済ませている。
         }
       },
     },
