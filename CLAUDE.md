@@ -45,22 +45,31 @@ task-kanban/
 ├── src/
 │   ├── app/               # App Router（ルーティング = ディレクトリ構成）
 │   │   ├── layout.tsx     # ルートレイアウト（フォント・globals.css の読み込み）
-│   │   ├── page.tsx       # トップページ（/）。見出し + <Suspense> 内でカンバンを描画
+│   │   ├── page.tsx       # トップページ（/）。ヘッダー（<Suspense> 内に UserMenu）+ <Suspense> 内でカンバンを描画
 │   │   ├── page.test.tsx  # page.tsx のテスト（テストは対象の隣に置く）
 │   │   ├── actions.ts     # タスクの Server Action（createTask / updateTask / deleteTask）
 │   │   ├── _components/   # ページ専用コンポーネント（_ 付きはルーティング対象外）
 │   │   │   ├── task-board-loader.tsx  # async Server Component。取得してボードに渡す
+│   │   │   ├── user-menu.tsx          # async Server Component。メールアドレスとログアウト
 │   │   │   ├── kanban-board.tsx       # 3 列のボード（Client）
 │   │   │   ├── task-create-form.tsx   # 追加フォーム（Client）
 │   │   │   ├── task-card.tsx          # カード表示 ⇄ 編集フォーム、削除（Client）
 │   │   │   └── confirm-dialog.tsx     # 削除前の確認ダイアログ（Client）
+│   │   ├── login/page.tsx  # ログイン画面（/login）
+│   │   ├── signup/page.tsx # 新規登録画面（/signup）
+│   │   ├── auth/
+│   │   │   ├── actions.ts             # 認証の Server Action（signIn / signUp / signOut）
+│   │   │   ├── confirm/route.ts       # 確認メールのリンク先（/auth/confirm）。verifyOtp
+│   │   │   └── _components/           # AuthCard（画面の枠）・CredentialsForm（Client）
 │   │   └── globals.css    # Tailwind・shadcn の読み込みとテーマトークン
 │   ├── components/
 │   │   └── ui/            # shadcn/ui のコンポーネント（CLI で追加。例: button.tsx）
 │   ├── lib/
-│   │   ├── supabase/      # Supabase クライアント・接続確認・生成型（後述）
+│   │   ├── auth/          # リダイレクト判定・認証フォームの検証・ログインユーザー取得（routes / validation / session）
+│   │   ├── supabase/      # Supabase クライアント・Proxy 用セッション更新・接続確認・生成型（後述）
 │   │   ├── tasks/         # タスクの型・入力検証・取得処理（types / validation / queries）
 │   │   └── utils.ts       # `cn()`（`cn` パッケージの再エクスポート）
+│   ├── proxy.ts           # Proxy（旧 Middleware）。全リクエストでセッション更新と認証リダイレクト
 │   └── instrumentation.ts # サーバー起動時フック（Supabase 接続確認）
 ├── public/                # 静的ファイル（/ 直下で配信）
 ├── .env.example           # 環境変数のキー一覧（値は .env.local に書く）
@@ -116,6 +125,25 @@ UI は shadcn/ui（base-nova）のトーンに揃える。新しい画面・部�
 - **ホバー前提にしない**: 操作ボタンを hover 時だけ表示する作りにしない（タッチ端末で押せなくなる）。常時表示し、色を `text-muted-foreground` にして控えめにする。
 - **デザインの確認**: UI を変えたら Playwright MCP で、デスクトップ（1280px）・モバイル（390px）・ダーク（`<html>` に `dark` クラスを付ける）のスクリーンショットを撮って確認する。
 
+## 認証（Supabase Auth、メール+パスワード）
+
+- **全体の流れ**: `src/proxy.ts` → `updateSession()`（`src/lib/supabase/proxy.ts`）が全リクエストで `auth.getClaims()` を呼び、トークンを検証・更新して Cookie に書き戻す。続けて `getAuthRedirect()`（`src/lib/auth/routes.ts`）で、未ログインなら `/login` へ、ログイン済みで `/login`・`/signup` を開いたら `/` へリダイレクトする。公開パスは `/login`・`/signup`・`/auth/*`。
+- **`updateSession` の注意**: `createServerClient` と `getClaims()` の間に処理を挟まない（Supabase 公式の注意。セッションが不安定になる）。リダイレクトを返すときは、更新済みの Cookie をリダイレクトのレスポンスにも移す。
+- **ログインユーザーの取得は `getSignedInUser(supabase)`**（`src/lib/auth/session.ts`）。`getClaims()`（署名を検証する）を使い、`getSession()` の user は信用しない。戻り値は `{ id, email } | null`。
+- **Proxy だけに頼らない**: Server Action は Proxy の matcher の影響を受けるので、`createTask` などは先頭で `getSignedInUser` を確認し、未ログインなら「ログインが必要です…」を返す。最終防御は RLS。
+- **認証の Server Action**（`src/app/auth/actions.ts`）: `signIn` / `signUp` は `(prev: AuthActionState, formData) => Promise<AuthActionState>`、`AuthActionState = { error, message }`。成功時は `redirect()`（例外で中断するので try/catch で囲まない）。`signUp` はメール確認待ち（`session` が null）なら `message` を返す。`emailRedirectTo` にはリクエストの `Origin` + `/auth/confirm` を渡す。`signOut` は `/login` へリダイレクト。
+- **入力検証は `parseCredentialsForm()`**（`src/lib/auth/validation.ts`）を Client（`CredentialsForm`）と Server Action の両方で使う。パスワードは `passwordMinLength`（6、Supabase の既定）以上で、trim しない。
+- **ログイン失敗の文言**は、メールとパスワードのどちらが誤りかを明かさない。`email_not_confirmed` だけ確認を促す文言にする。
+- **確認メール**: 戻り先は `/auth/confirm`（Route Handler）。成功で `/`、失敗で `/login?error=confirm`（ログイン画面に案内を表示）。
+  - 既定のテンプレート（`{{ .ConfirmationURL }}`）では、Supabase がメールアドレスを確認してから `?code=...` 付きで戻すので、`exchangeCodeForSession(code)` でセッションに交換する（`@supabase/ssr` は PKCE フロー）。
+  - PKCE の code verifier は登録したブラウザの Cookie にあるため、別の端末でリンクを開くと交換に失敗する。ただしメールアドレスの確認自体は済んでいるので、ログインすればよい（案内の文言もそうしている）。
+  - `token_hash` + `type` が来た場合は `verifyOtp` で確認する（カスタム SMTP でテンプレートを編集したとき用）。
+- **Supabase ダッシュボードの設定**（MCP では変更できない）:
+  - Authentication → URL Configuration: Site URL と Redirect URLs に `http://localhost:3000/**` と本番 URL を登録する。
+  - メールテンプレートは既定のまま使う。組み込み SMTP ではテンプレートを編集できない（編集にはカスタム SMTP の設定が必要）。
+  - 無料プランの組み込み SMTP は送信数の上限が小さい（1 時間に数通）。
+- **画面**: `/login`・`/signup` は `AuthCard`（中央寄せのカード）+ `CredentialsForm`（Server Action は props で受け取る）。トップのヘッダー右に `UserMenu`（`<Suspense>` 内）。
+
 ## タスク機能の設計（データの流れ）
 
 - **一覧取得**: `page.tsx` → `<Suspense>` → `TaskBoardLoader`（async Server Component）→ `getTasks()`（`src/lib/tasks/queries.ts`）。
@@ -136,13 +164,14 @@ UI は shadcn/ui（base-nova）のトーンに揃える。新しい画面・部�
 - **クライアントの使い分け**（どちらも `createClient()` という名前）:
   - Server Component / Server Action / Route Handler では `@/lib/supabase/server`。`async` なので `await createClient()` で呼ぶ。`await cookies()` を使うので、リクエストごとに生成し、モジュールのグローバル変数に保持しない。
   - Client Component では `@/lib/supabase/client`。
-  - Server Component からは Cookie を書けないため、`setAll` の例外は握りつぶしている。認証を導入してセッションを更新する必要が出たら、Proxy（`proxy.ts`）で `updateSession` を実装する。
+  - Server Component からは Cookie を書けないため、`setAll` の例外は握りつぶしている。トークンの更新は Proxy（`src/proxy.ts` → `updateSession`）で済ませている。
+  - `createClient()` は `cookies()` の後に `await io()`（`next/cache`）を呼ぶ。supabase-js はセッションの有効期限確認で `Date.now()` を読むため、Cookie 付きのプリレンダー（プリフェッチ）中に走ると `blocking-prerender-current-time` エラーになる（ログイン中だけ発生）。消さないこと。
 - **起動時の接続確認**: `src/instrumentation.ts` の `register()`（Node.js ランタイムのみ）が `checkSupabaseConnection()` を呼ぶ。この関数は、テーブルに依存しない `/auth/v1/health` に API キーを付けて叩き、URL とキーの両方を検証する（タイムアウト 5 秒）。**失敗時のみ** `console.error` でログを出し、成功時は何も出さない。
 - **接続確認の結果型**: `checkSupabaseConnection()` は例外を投げず、`{ ok: true, url } | { ok: false, reason }` を返す。
 - **テスト**: 環境変数は `vi.stubEnv`、通信は `vi.stubGlobal("fetch", ...)` でモックする。後片付けは `afterEach` で `vi.unstubAllEnvs()` / `vi.unstubAllGlobals()`（例: `src/lib/supabase/check-connection.test.ts`）。
 - **スキーマ変更**: Supabase MCP の `apply_migration` で行う。変更の前に `list_tables` で現状を確認する。適用後は `get_advisors`（security）で警告がないか確認する。
 - **型**: `generate_typescript_types` の出力を `src/lib/supabase/database.types.ts` にそのまま保存する（手で編集しない）。`server.ts` / `client.ts` は `<Database>` ジェネリクス付きで生成する。スキーマを変えたら型も生成し直す。行の型は `Tables<"tasks">` を使う。
-- **テーブル `public.tasks`**（適用済みマイグレーション: `create_tasks_table`、`grant_tasks_to_api_roles`）:
+- **テーブル `public.tasks`**（適用済みマイグレーション: `create_tasks_table`、`grant_tasks_to_api_roles`、`restrict_tasks_to_owner`）:
 
   | 列 | 型・制約 |
   | --- | --- |
@@ -151,10 +180,14 @@ UI は shadcn/ui（base-nova）のトーンに揃える。新しい画面・部�
   | `description` | `text not null default ''`、1000 文字以内（check） |
   | `status` | `text not null default 'todo'`、`'todo' \| 'in_progress' \| 'done'`（check。enum 型ではない） |
   | `created_at` / `updated_at` | `timestamptz`。`updated_at` は trigger `tasks_set_updated_at`（関数 `public.set_updated_at()`）で自動更新 |
+  | `user_id` | `uuid not null default auth.uid()`、`auth.users(id)` を参照（`on delete cascade`）。インデックス `tasks_user_id_idx` |
 
   制約を変えるときは、DB の check と `validation.ts` / `types.ts` の両方を揃える。
-- **テーブル作成時は GRANT も必要**: このプロジェクトでは、新しいテーブルに API ロールの権限が自動で付かない。RLS ポリシーだけだと `permission denied for table ...` になるので、`grant select, insert, update, delete on table ... to anon, authenticated;` を必ず一緒に書く。
-- **RLS（暫定）**: 認証が未導入のため、`tasks` のポリシーは `anon` / `authenticated` に全操作を許可している（publishable キーがあれば誰でも読み書きできる）。認証を導入したら `user_id` 列を追加し、`auth.uid()` でポリシーを絞る。
+- **テーブル作成時は GRANT も必要**: このプロジェクトでは、新しいテーブルに API ロールの権限が自動で付かない。RLS ポリシーだけだと `permission denied for table ...` になるので、`grant select, insert, update, delete on table ... to authenticated;` を必ず一緒に書く（ログイン必須のデータなら `anon` には付けない）。
+- **RLS（本人のみ）**: `tasks` のポリシーは `authenticated` 向けの `tasks_select_own` / `tasks_insert_own` / `tasks_update_own` / `tasks_delete_own` で、すべて `(select auth.uid()) = user_id`（insert・update は `with check` も同条件）。`anon` には `tasks` の権限自体がない（`revoke all`）。
+  - `user_id` は DB の既定値 `auth.uid()` で埋まるので、アプリは `insert` で `user_id` を渡さない。他人の `user_id` を指定しても `with check` で拒否される。
+  - `getTasks()` は `user_id` で絞り込まない（RLS が本人の行だけを返す）。
+  - ポリシーでは `auth.uid()` を `(select auth.uid())` で包む（行ごとの再評価を防ぐ。advisor 推奨）。
 - **関数を作るとき**は `set search_path = ''` を付ける（advisor の警告を防ぐ）。
 
 ## テスト
@@ -162,9 +195,10 @@ UI は shadcn/ui（base-nova）のトーンに揃える。新しい画面・部�
 - Vitest 5 + React Testing Library + jsdom。設定は `vitest.config.mts`（`@/` は `resolve.tsconfigPaths: true` で解決、`vite-tsconfig-paths` プラグインは不要）。
 - `vitest.setup.ts` で `@testing-library/jest-dom/vitest` を読み込み済み（`toBeInTheDocument()` 等が使える）。
 - テストは `src/**/*.test.{ts,tsx}` に対象ファイルと並べて配置する。
-- `async` Server Component は Vitest では未対応。そうした部分は E2E テストで検証する（`docs/01-app/02-guides/testing/`）。`page.test.tsx` では `vi.mock("./_components/task-board-loader")` で差し替えて、見出しだけを検証している。
+- `async` Server Component は Vitest では未対応。そうした部分は E2E テストで検証する（`docs/01-app/02-guides/testing/`）。`page.test.tsx` では `vi.mock("./_components/task-board-loader")` と `vi.mock("./_components/user-menu")` で差し替えて、見出しだけを検証している。
 - 操作は `@testing-library/user-event`（`userEvent.setup()`）で書く。要素はロールとアクセシブルネームで取る（例: `getByRole("region", { name: "Todo" })`、`getByRole("button", { name: "「買い物」を編集" })`）。
-- **Server Action・取得処理のテスト**（`src/app/actions.test.ts`、`src/lib/tasks/queries.test.ts`）: `vi.hoisted` + `vi.mock` で `@/lib/supabase/server` の `createClient` と `next/cache` の `refresh` をモックする。Supabase は、呼び出しを記録して `then` で結果を返すフェイクのクエリビルダーで代用する。エラー時のログは `vi.spyOn(console, "error")` で抑える。
+- **Server Action・取得処理のテスト**（`src/app/actions.test.ts`、`src/lib/tasks/queries.test.ts`）: `vi.hoisted` + `vi.mock` で `@/lib/supabase/server` の `createClient` と `next/cache` の `refresh` をモックする。Supabase は、呼び出しを記録して `then` で結果を返すフェイクのクエリビルダーで代用する。エラー時のログは `vi.spyOn(console, "error")` で抑える。フェイクには `auth.getClaims` も持たせ、`createFakeSupabase(result, { signedIn: false })` で未ログインを再現する。
+- **認証のテスト**（`src/app/auth/actions.test.ts`）: `createClient` に加えて `next/navigation` の `redirect` と `next/headers` の `headers` をモックする。`redirect` はモックでは中断しないので、呼ばれた引数で検証する。
 - **コンポーネントのテスト**: Server Action は props で注入した `vi.fn<TaskAction>()` で代用し、送信内容は `mock.calls[0][1]`（FormData）で検証する。
 
 ## コーディングルール
