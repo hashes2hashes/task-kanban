@@ -57,10 +57,12 @@ task-kanban/
 │   │   │   └── confirm-dialog.tsx     # 削除前の確認ダイアログ（Client）
 │   │   ├── login/page.tsx  # ログイン画面（/login）
 │   │   ├── signup/page.tsx # 新規登録画面（/signup）
+│   │   ├── forgot-password/page.tsx  # パスワード再設定の申請画面（/forgot-password）
+│   │   ├── reset-password/page.tsx   # 新しいパスワードの入力画面（/reset-password、要ログイン）
 │   │   ├── auth/
-│   │   │   ├── actions.ts             # 認証の Server Action（signIn / signUp / signOut）
-│   │   │   ├── confirm/route.ts       # 確認メールのリンク先（/auth/confirm）。code をセッションに交換（token_hash なら verifyOtp）
-│   │   │   └── _components/           # AuthCard（画面の枠）・CredentialsForm（Client）
+│   │   │   ├── actions.ts             # 認証の Server Action（signIn / signUp / signOut / requestPasswordReset / updatePassword）
+│   │   │   ├── confirm/route.ts       # 確認メール・再設定メールのリンク先（/auth/confirm）。code をセッションに交換（token_hash なら verifyOtp）
+│   │   │   └── _components/           # AuthCard（画面の枠）・CredentialsForm / ForgotPasswordForm / ResetPasswordForm（Client）
 │   │   └── globals.css    # Tailwind・shadcn の読み込みとテーマトークン
 │   ├── components/
 │   │   └── ui/            # shadcn/ui のコンポーネント（CLI で追加。例: button.tsx）
@@ -127,17 +129,23 @@ UI は shadcn/ui（base-nova）のトーンに揃える。新しい画面・部�
 
 ## 認証（Supabase Auth、メール+パスワード）
 
-- **全体の流れ**: `src/proxy.ts` → `updateSession()`（`src/lib/supabase/proxy.ts`）が全リクエストで `auth.getClaims()` を呼び、トークンを検証・更新して Cookie に書き戻す。続けて `getAuthRedirect()`（`src/lib/auth/routes.ts`）で、未ログインなら `/login` へ、ログイン済みで `/login`・`/signup` を開いたら `/` へリダイレクトする。公開パスは `/login`・`/signup`・`/auth/*`。
+- **全体の流れ**: `src/proxy.ts` → `updateSession()`（`src/lib/supabase/proxy.ts`）が全リクエストで `auth.getClaims()` を呼び、トークンを検証・更新して Cookie に書き戻す。続けて `getAuthRedirect()`（`src/lib/auth/routes.ts`）で、未ログインなら `/login` へ、ログイン済みで `/login`・`/signup`・`/forgot-password` を開いたら `/` へリダイレクトする。公開パスは `/login`・`/signup`・`/forgot-password`・`/auth/*`。`/reset-password` は再設定リンクでログインした状態で開くので公開しない。
 - **`updateSession` の注意**: `createServerClient` と `getClaims()` の間に処理を挟まない（Supabase 公式の注意。セッションが不安定になる）。リダイレクトを返すときは、更新済みの Cookie をリダイレクトのレスポンスにも移す。
 - **ログインユーザーの取得は `getSignedInUser(supabase)`**（`src/lib/auth/session.ts`）。`getClaims()`（署名を検証する）を使い、`getSession()` の user は信用しない。戻り値は `{ id, email } | null`。
 - **Proxy だけに頼らない**: Server Action は Proxy の matcher の影響を受けるので、`createTask` などは先頭で `getSignedInUser` を確認し、未ログインなら「ログインが必要です…」を返す。最終防御は RLS。
-- **認証の Server Action**（`src/app/auth/actions.ts`）: `signIn` / `signUp` は `(prev: AuthActionState, formData) => Promise<AuthActionState>`、`AuthActionState = { error, message }`。成功時は `redirect()`（例外で中断するので try/catch で囲まない）。`signUp` はメール確認待ち（`session` が null）なら `message` を返す。`emailRedirectTo` にはリクエストの `Origin` + `/auth/confirm` を渡す。`signOut` は `/login` へリダイレクト。
-- **入力検証は `parseCredentialsForm()`**（`src/lib/auth/validation.ts`）を Client（`CredentialsForm`）と Server Action の両方で使う。パスワードは `passwordMinLength`（6、Supabase の既定）以上で、trim しない。
+- **認証の Server Action**（`src/app/auth/actions.ts`）: `signIn` / `signUp` は `(prev: AuthActionState, formData) => Promise<AuthActionState>`、`AuthActionState = { error, message }`。成功時は `redirect()`（例外で中断するので try/catch で囲まない）。`signUp` はメール確認待ち（`session` が null）なら `message` を返す。`emailRedirectTo` にはリクエストの `Origin` + `/auth/confirm` を渡す。`signOut` は `/login` へリダイレクト。戻り先 URL は `getConfirmUrl()`（Origin がなければ null で、Supabase の Site URL に任せる）。
+- **入力検証**（`src/lib/auth/validation.ts`）は Client のフォームと Server Action の両方で同じ関数を使う。ログイン・新規登録は `parseCredentialsForm()`、再設定の申請は `parseEmailForm()`、新しいパスワードは `parseNewPasswordForm()`（`password` と `passwordConfirmation` の一致も確認）。パスワードは `passwordMinLength`（6、Supabase の既定）以上で、trim しない。
 - **ログイン失敗の文言**は、メールとパスワードのどちらが誤りかを明かさない。`email_not_confirmed` だけ確認を促す文言にする。
 - **確認メール**: 戻り先は `/auth/confirm`（Route Handler）。成功で `/`、失敗で `/login?error=confirm`（ログイン画面に案内を表示）。
   - 既定のテンプレート（`{{ .ConfirmationURL }}`）では、Supabase がメールアドレスを確認してから `?code=...` 付きで戻すので、`exchangeCodeForSession(code)` でセッションに交換する（`@supabase/ssr` は PKCE フロー）。
   - PKCE の code verifier は登録したブラウザの Cookie にあるため、別の端末でリンクを開くと交換に失敗する。ただしメールアドレスの確認自体は済んでいるので、ログインすればよい（案内の文言もそうしている）。
   - `token_hash` + `type` が来た場合は `verifyOtp` で確認する（カスタム SMTP でテンプレートを編集したとき用）。
+- **パスワード再設定**: `/login` の「パスワードをお忘れの方」→ `/forgot-password` で `requestPasswordReset`（`resetPasswordForEmail`、`redirectTo` は確認メールと同じ `/auth/confirm`）→ メールのリンク → `/auth/confirm` でセッションに交換して `/reset-password` へ → `updatePassword`（`updateUser({ password })`）→ `/`。
+  - `/auth/confirm` は、交換時に通知される `PASSWORD_RECOVERY` イベント（`onAuthStateChange`。交換の前に購読する）で再設定用のリンクかを判別する。`exchangeCodeForSession` の戻り値の `redirectType` は実行時には返るが型定義にないので使わない。`verifyOtp` の場合は `type === "recovery"` で判別する。
+  - 戻り先が確認メールと同じなので、Redirect URLs の追加登録は不要。
+  - 申請の結果は、メールアドレスが登録済みかどうかを明かさない文言にする（Supabase も未登録のアドレスでエラーを返さない）。送信回数の上限（`over_email_send_rate_limit`）だけ別の文言にする。
+  - `updatePassword` も先頭で `getSignedInUser` を確認する。`same_password` と `weak_password` は別の文言にする。
+  - `/reset-password` はログイン中なら誰でも開けるので、実質的に「パスワード変更」画面も兼ねる（現在のパスワードは求めない）。
 - **Supabase ダッシュボードの設定**（MCP では変更できない）:
   - Authentication → URL Configuration:
     - Site URL は本番 URL にする。`emailRedirectTo` が Redirect URLs に合わないと、Supabase は Site URL に戻すため、localhost のままだと本番の確認メールから localhost に飛ばされる。
@@ -145,7 +153,7 @@ UI は shadcn/ui（base-nova）のトーンに揃える。新しい画面・部�
     - Vercel のプレビューデプロイは URL が毎回変わるため、そのままでは確認メールの戻り先が許可されない。プレビューでも登録を試す場合は `https://*-<チーム名>.vercel.app/**` を追加する。
   - メールテンプレートは既定のまま使う。組み込み SMTP ではテンプレートを編集できない（編集にはカスタム SMTP の設定が必要）。
   - 無料プランの組み込み SMTP は送信数の上限が小さい（1 時間に数通）。
-- **画面**: `/login`・`/signup` は `AuthCard`（中央寄せのカード）+ `CredentialsForm`（Server Action は props で受け取る）。トップのヘッダー右に `UserMenu`（`<Suspense>` 内）。
+- **画面**: `/login`・`/signup`・`/forgot-password`・`/reset-password` は `AuthCard`（中央寄せのカード）+ 各フォーム（Server Action は props で受け取る）。トップのヘッダー右に `UserMenu`（`<Suspense>` 内）。
 
 ## タスク機能の設計（データの流れ）
 
@@ -201,7 +209,7 @@ UI は shadcn/ui（base-nova）のトーンに揃える。新しい画面・部�
 - `async` Server Component は Vitest では未対応。そうした部分は E2E テストで検証する（`docs/01-app/02-guides/testing/`）。`page.test.tsx` では `vi.mock("./_components/task-board-loader")` と `vi.mock("./_components/user-menu")` で差し替えて、見出しだけを検証している。
 - 操作は `@testing-library/user-event`（`userEvent.setup()`）で書く。要素はロールとアクセシブルネームで取る（例: `getByRole("region", { name: "Todo" })`、`getByRole("button", { name: "「買い物」を編集" })`）。
 - **Server Action・取得処理のテスト**（`src/app/actions.test.ts`、`src/lib/tasks/queries.test.ts`）: `vi.hoisted` + `vi.mock` で `@/lib/supabase/server` の `createClient` と `next/cache` の `refresh` をモックする。Supabase は、呼び出しを記録して `then` で結果を返すフェイクのクエリビルダーで代用する。エラー時のログは `vi.spyOn(console, "error")` で抑える。フェイクには `auth.getClaims` も持たせ、`createFakeSupabase(result, { signedIn: false })` で未ログインを再現する。
-- **認証のテスト**（`src/app/auth/actions.test.ts`）: `createClient` に加えて `next/navigation` の `redirect` と `next/headers` の `headers` をモックする。`redirect` はモックでは中断しないので、呼ばれた引数で検証する。
+- **認証のテスト**（`src/app/auth/actions.test.ts`）: `createClient` に加えて `next/navigation` の `redirect` と `next/headers` の `headers` をモックする。`redirect` はモックでは中断しないので、呼ばれた引数で検証する。`/auth/confirm` のテスト（`route.test.ts`）では、フェイクの `exchangeCodeForSession` が購読済みのリスナーに `PASSWORD_RECOVERY` を通知して、再設定用のリンクを再現する。
 - **コンポーネントのテスト**: Server Action は props で注入した `vi.fn<TaskAction>()` で代用し、送信内容は `mock.calls[0][1]`（FormData）で検証する。
 
 ## コーディングルール
