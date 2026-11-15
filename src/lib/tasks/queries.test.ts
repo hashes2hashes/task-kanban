@@ -29,14 +29,14 @@ describe("getTasks", () => {
     ];
     const { order } = mockSelectResult({ data: rows, error: null });
 
-    await expect(getTasks()).resolves.toEqual(rows);
+    await expect(getTasks()).resolves.toEqual({ ok: true, tasks: rows });
     expect(order).toHaveBeenCalledWith("created_at", { ascending: true });
   });
 
   it("タスクが 0 件だと、空配列を返す", async () => {
     mockSelectResult({ data: [], error: null });
 
-    await expect(getTasks()).resolves.toEqual([]);
+    await expect(getTasks()).resolves.toEqual({ ok: true, tasks: [] });
   });
 
   it("定義外のステータスを持つ行は、一覧から除外する", async () => {
@@ -48,14 +48,14 @@ describe("getTasks", () => {
       error: null,
     });
 
-    const tasks = await getTasks();
+    const result = await getTasks();
 
-    expect(tasks.map((task) => task.id)).toEqual(["2"]);
+    expect(result.ok && result.tasks.map((task) => task.id)).toEqual(["2"]);
   });
 
-  it("DB がエラーを返すと、エラーを投げる", async () => {
+  it("DB がエラーを返すと、例外を投げずに失敗として理由を返す", async () => {
     mockSelectResult({ data: null, error: { message: "boom" } });
 
-    await expect(getTasks()).rejects.toThrow("タスクの取得に失敗しました: boom");
+    await expect(getTasks()).resolves.toEqual({ ok: false, reason: "boom" });
   });
 });
