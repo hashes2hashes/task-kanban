@@ -91,7 +91,30 @@ task-kanban/
 - **`cn()`**: クラス結合は `@/lib/utils` の `cn()` を使う。中身は `cn` パッケージ（shadcn 公式。`clsx` + `tailwind-merge` の後継）の再エクスポート。生成コンポーネントは `cn` パッケージを直接 import している。
 - **テーマ**: `src/app/globals.css` が `tw-animate-css` と `shadcn/tailwind.css` を読み込み、`:root` / `.dark` に色の CSS 変数（oklch）、`@theme inline` で `--color-*` に割り当てている。色は `bg-background` / `text-foreground` / `bg-primary` などのトークンで指定し、生の色値を直書きしない。ダークモードは `.dark` クラス方式（`@custom-variant dark`）。
 - **フォント変数の注意**: CLI は `--font-sans: var(--font-sans)`（自己参照）を書き出すが、`layout.tsx` が定義するのは `--font-geist-sans`。`@theme inline` では `--font-sans` / `--font-heading` を `var(--font-geist-sans)` にしてある。`init` や `add` で `globals.css` が上書きされたら、ここを確認する。
-- **既存コンポーネント**（`src/app/_components/`）は、まだ shadcn/ui に置き換えていない。
+- **画面の構成**: `src/app/_components/` は shadcn/ui で組んでいる（`button` / `card` / `input` / `textarea` / `label` / `badge` / `alert` / `alert-dialog` / `native-select` / `skeleton`）。エラー表示は `Alert variant="destructive"`（`role="alert"`）、アイコンは `lucide-react`。
+- **ステータス選択は `native-select`**: Base UI の `Select` はネイティブの `<select>` ではないため、テストの `combobox` + `user.selectOptions` が使えない。
+- **`ConfirmDialog` は `AlertDialog`（Base UI）**: マウント中だけ `open`、Esc / キャンセルは `onOpenChange(false)` → `onCancel`。初期フォーカスは Popup の `initialFocus` で指定する。Base UI は次のフレームでフォーカスを移すため、テストでは `waitFor` で待つ。
+
+## デザインルール
+
+UI は shadcn/ui（base-nova）のトーンに揃える。新しい画面・部品を作るときも以下に従う。
+
+- **部品は shadcn/ui から選ぶ**: 生の `<button>` / `<input>` / `<textarea>` / `<select>` は書かず、`@/components/ui` の部品を使う。足りない部品は `npx shadcn@latest add` で追加し、自前で似た部品を作らない。
+- **色はトークンだけ**: `bg-background` / `bg-card` / `bg-muted` / `text-foreground` / `text-muted-foreground` / `border` / `text-destructive` などを使う。`zinc-*` / `red-*` などのパレット色や生の色値は書かない。ダーク用の `dark:` クラスも原則書かない（トークンが `.dark` で切り替わる）。
+- **面の階層**: ページ背景 `bg-background` → 列などのまとまり `rounded-xl border bg-muted/40 p-3` → 個々の要素 `Card`（タスクは `size="sm"`、hover で `shadow-md`）。角丸は `rounded-xl`（面）/ `rounded-lg`（小要素）に揃える。
+- **ボタンの使い分け**: 主操作（追加・保存）は `default`、取り消しは `ghost`（ダイアログ内は `AlertDialogCancel` の `outline`）、破壊的操作は `destructive`。カード上の操作は `variant="ghost" size="icon-sm"` のアイコンボタンにし、`aria-label` に対象名を入れる（例: `「買い物」を削除`）。
+- **アイコン**: `lucide-react` の `〜Icon` 名で import し、装飾なので `aria-hidden="true"` を付ける。ステータスは Todo `CircleIcon` / In Progress `CircleDashedIcon` / Done `CircleCheckIcon`。
+- **フォーム**: `Label htmlFor` と `useId()` で入力と紐付け、ラベルの文言をアクセシブルネームにする。項目は `flex flex-col gap-1.5〜2` で縦に並べる。
+- **状態の見せ方**:
+  - 送信中: ボタンを `disabled` にし、`Loader2Icon className="animate-spin"` と「追加中…」などの文言を出す。
+  - エラー: `Alert variant="destructive"` + `AlertCircleIcon`（`role="alert"` が付く）。
+  - 空: 点線枠（`border border-dashed`）+ アイコン + 短い文言。
+  - 読み込み: `Skeleton` で実際のレイアウトに近い形を出し、`sr-only` で「読み込み中…」を入れる。
+  - 確認: 破壊的操作は `AlertDialog`（`ConfirmDialog`）で確認する。
+- **見出しの階層**: ページ `h1` → 列 `h2` → カード `h3`。テストが見出しのレベルで要素を取るので崩さない（`CardTitle` は `div` なので、見出しが必要なら `h3` を明示する）。
+- **レスポンシブ**: モバイル基準で書き、`sm:`（フォームを横並び）/ `md:`（3 列）で広げる。390px 幅で横スクロールが出ないこと。
+- **ホバー前提にしない**: 操作ボタンを hover 時だけ表示する作りにしない（タッチ端末で押せなくなる）。常時表示し、色を `text-muted-foreground` にして控えめにする。
+- **デザインの確認**: UI を変えたら Playwright MCP で、デスクトップ（1280px）・モバイル（390px）・ダーク（`<html>` に `dark` クラスを付ける）のスクリーンショットを撮って確認する。
 
 ## タスク機能の設計（データの流れ）
 
