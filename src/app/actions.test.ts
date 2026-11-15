@@ -12,8 +12,11 @@ vi.mock("next/cache", () => ({ refresh: refreshMock }));
 
 type QueryResult = { data: unknown; error: { message: string } | null };
 
-/** Supabase のクエリビルダーを模したフェイク。呼び出しを記録し、最後に result を返す。 */
-function createFakeSupabase(result: QueryResult) {
+/**
+ * Supabase のクエリビルダーを模したフェイク。呼び出しを記録し、最後に result を返す。
+ * signedIn が false なら、auth.getClaims() が未ログイン（claims なし）を返す。
+ */
+function createFakeSupabase(result: QueryResult, { signedIn = true } = {}) {
   const calls: Array<{ method: string; args: unknown[] }> = [];
   const builder = {
     then(resolve: (value: QueryResult) => void) {
@@ -27,7 +30,11 @@ function createFakeSupabase(result: QueryResult) {
     };
   });
   const from = vi.fn(() => builder);
-  return { client: { from }, from, calls };
+  const getClaims = vi.fn().mockResolvedValue({
+    data: signedIn ? { claims: { sub: "user-1", email: "user@example.com" } } : null,
+    error: null,
+  });
+  return { client: { from, auth: { getClaims } }, from, calls };
 }
 
 function buildForm(fields: Record<string, string>) {
@@ -82,6 +89,17 @@ describe("createTask", () => {
     const result = await createTask(initialState, buildForm({ title: "買い物" }));
 
     expect(result).toEqual({ error: "タスクの追加に失敗しました" });
+    expect(refreshMock).not.toHaveBeenCalled();
+  });
+
+  it("未ログインだと、DB を呼ばずにログインを求めるエラーを返す", async () => {
+    const fake = createFakeSupabase({ data: null, error: null }, { signedIn: false });
+    createClientMock.mockResolvedValue(fake.client);
+
+    const result = await createTask(initialState, buildForm({ title: "買い物" }));
+
+    expect(result).toEqual({ error: "ログインが必要です。再度ログインしてください" });
+    expect(fake.from).not.toHaveBeenCalled();
     expect(refreshMock).not.toHaveBeenCalled();
   });
 });
@@ -147,6 +165,20 @@ describe("updateTask", () => {
     expect(result).toEqual({ error: "タスクの更新に失敗しました" });
     expect(refreshMock).not.toHaveBeenCalled();
   });
+
+  it("未ログインだと、DB を呼ばずにログインを求めるエラーを返す", async () => {
+    const fake = createFakeSupabase({ data: null, error: null }, { signedIn: false });
+    createClientMock.mockResolvedValue(fake.client);
+
+    const result = await updateTask(
+      initialState,
+      buildForm({ id: taskId, title: "買い物" }),
+    );
+
+    expect(result).toEqual({ error: "ログインが必要です。再度ログインしてください" });
+    expect(fake.from).not.toHaveBeenCalled();
+    expect(refreshMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("deleteTask", () => {
@@ -176,6 +208,17 @@ describe("deleteTask", () => {
     const result = await deleteTask(initialState, buildForm({ id: taskId }));
 
     expect(result).toEqual({ error: "タスクの削除に失敗しました" });
+    expect(refreshMock).not.toHaveBeenCalled();
+  });
+
+  it("未ログインだと、DB を呼ばずにログインを求めるエラーを返す", async () => {
+    const fake = createFakeSupabase({ data: null, error: null }, { signedIn: false });
+    createClientMock.mockResolvedValue(fake.client);
+
+    const result = await deleteTask(initialState, buildForm({ id: taskId }));
+
+    expect(result).toEqual({ error: "ログインが必要です。再度ログインしてください" });
+    expect(fake.from).not.toHaveBeenCalled();
     expect(refreshMock).not.toHaveBeenCalled();
   });
 });
