@@ -6,6 +6,9 @@ import Home from "./page";
 vi.mock("./_components/task-board-loader", () => ({
   TaskBoardLoader: () => <div>ボード</div>,
 }));
+vi.mock("./_components/user-menu", () => ({
+  UserMenu: () => <div>ユーザーメニュー</div>,
+}));
 
 describe("Home", () => {
   it("見出しが表示される", () => {

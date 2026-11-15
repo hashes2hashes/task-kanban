@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { KanbanSquareIcon } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TaskBoardLoader } from "./_components/task-board-loader";
+import { UserMenu } from "./_components/user-menu";
 
 export default function Home() {
   return (
@@ -16,6 +17,11 @@ export default function Home() {
             <p className="text-sm text-muted-foreground">
               タスクを追加して、ステータスごとに進み具合を管理しましょう。
             </p>
+          </div>
+          <div className="ml-auto">
+            <Suspense>
+              <UserMenu />
+            </Suspense>
           </div>
         </header>
         <Suspense fallback={<BoardSkeleton />}>
