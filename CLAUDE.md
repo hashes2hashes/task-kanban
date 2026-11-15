@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 概要
 
 タスク管理カンバン。タスクの追加・編集・削除・一覧表示とステータス管理 (Todo / In Progress / Done) ができる。
-Next.ja + Supabase で構築し、Vercel にデプロイする。
+Next.js + Supabase で構築し、Vercel にデプロイする。
 
 ## 技術スタック
 
@@ -59,7 +59,7 @@ task-kanban/
 │   │   ├── signup/page.tsx # 新規登録画面（/signup）
 │   │   ├── auth/
 │   │   │   ├── actions.ts             # 認証の Server Action（signIn / signUp / signOut）
-│   │   │   ├── confirm/route.ts       # 確認メールのリンク先（/auth/confirm）。verifyOtp
+│   │   │   ├── confirm/route.ts       # 確認メールのリンク先（/auth/confirm）。code をセッションに交換（token_hash なら verifyOtp）
 │   │   │   └── _components/           # AuthCard（画面の枠）・CredentialsForm（Client）
 │   │   └── globals.css    # Tailwind・shadcn の読み込みとテーマトークン
 │   ├── components/
@@ -139,7 +139,10 @@ UI は shadcn/ui（base-nova）のトーンに揃える。新しい画面・部�
   - PKCE の code verifier は登録したブラウザの Cookie にあるため、別の端末でリンクを開くと交換に失敗する。ただしメールアドレスの確認自体は済んでいるので、ログインすればよい（案内の文言もそうしている）。
   - `token_hash` + `type` が来た場合は `verifyOtp` で確認する（カスタム SMTP でテンプレートを編集したとき用）。
 - **Supabase ダッシュボードの設定**（MCP では変更できない）:
-  - Authentication → URL Configuration: Site URL と Redirect URLs に `http://localhost:3000/**` と本番 URL を登録する。
+  - Authentication → URL Configuration:
+    - Site URL は本番 URL にする。`emailRedirectTo` が Redirect URLs に合わないと、Supabase は Site URL に戻すため、localhost のままだと本番の確認メールから localhost に飛ばされる。
+    - Redirect URLs には `http://localhost:3000/**`（開発用）と本番の `https://<ドメイン>/auth/confirm` を登録する。本番は完全一致の URL で登録する。
+    - Vercel のプレビューデプロイは URL が毎回変わるため、そのままでは確認メールの戻り先が許可されない。プレビューでも登録を試す場合は `https://*-<チーム名>.vercel.app/**` を追加する。
   - メールテンプレートは既定のまま使う。組み込み SMTP ではテンプレートを編集できない（編集にはカスタム SMTP の設定が必要）。
   - 無料プランの組み込み SMTP は送信数の上限が小さい（1 時間に数通）。
 - **画面**: `/login`・`/signup` は `AuthCard`（中央寄せのカード）+ `CredentialsForm`（Server Action は props で受け取る）。トップのヘッダー右に `UserMenu`（`<Suspense>` 内）。
