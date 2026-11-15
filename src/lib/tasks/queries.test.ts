@@ -15,6 +15,7 @@ const baseRow = {
   description: "",
   created_at: "2026-11-15T00:00:00Z",
   updated_at: "2026-11-15T00:00:00Z",
+  user_id: "user-1",
 };
 
 afterEach(() => {
