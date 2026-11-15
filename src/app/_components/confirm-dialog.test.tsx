@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -19,12 +19,15 @@ function renderDialog() {
 }
 
 describe("ConfirmDialog", () => {
-  it("タイトルとメッセージを持つ確認ダイアログが表示され、キャンセルにフォーカスが当たる", () => {
+  it("タイトルとメッセージを持つ確認ダイアログが表示され、キャンセルにフォーカスが当たる", async () => {
     renderDialog();
 
     const dialog = screen.getByRole("alertdialog", { name: "タスクの削除" });
     expect(dialog).toHaveTextContent("「買い物」を削除しますか？");
-    expect(screen.getByRole("button", { name: "キャンセル" })).toHaveFocus();
+    // Base UI はダイアログを開いた次のフレームで初期フォーカスを移す。
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "キャンセル" })).toHaveFocus(),
+    );
   });
 
   it("確定ボタンを押すと、onConfirm だけが呼ばれる", async () => {

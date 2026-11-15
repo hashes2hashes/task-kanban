@@ -1,7 +1,24 @@
 "use client";
 
-import { startTransition, useActionState, useState } from "react";
+import { startTransition, useActionState, useId, useState } from "react";
+import {
+  AlertCircleIcon,
+  Loader2Icon,
+  PencilIcon,
+  Trash2Icon,
+} from "lucide-react";
 import type { ActionState } from "@/app/actions";
+import { Alert, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import {
   descriptionMaxLength,
   isTaskStatus,
@@ -43,48 +60,81 @@ export function TaskCard({ task, updateAction, deleteAction }: TaskCardProps) {
   };
 
   return (
-    <li className="rounded-md border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-      {isEditing ? (
-        <TaskEditForm
-          task={task}
-          updateAction={updateAction}
-          onDone={() => setIsEditing(false)}
-        />
-      ) : (
-        <div className={isDeleting ? "opacity-50" : undefined}>
-          <h3 className="font-medium break-words">{task.title}</h3>
-          {task.description && (
-            <p className="mt-1 whitespace-pre-wrap break-words text-sm text-zinc-600 dark:text-zinc-400">
-              {task.description}
-            </p>
-          )}
-          {deleteState.error && (
-            <p role="alert" className="mt-2 text-sm text-red-600">
-              {deleteState.error}
-            </p>
-          )}
-          <div className="mt-3 flex justify-end gap-2 text-sm">
-            <button
-              type="button"
-              aria-label={`「${task.title}」を編集`}
-              onClick={() => setIsEditing(true)}
-              disabled={isDeleting}
-              className="rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
+    <li>
+      <Card
+        size="sm"
+        className={cn(
+          "transition-shadow hover:shadow-md",
+          isEditing && "ring-2 ring-ring/50",
+        )}
+      >
+        <CardContent>
+          {isEditing ? (
+            <TaskEditForm
+              task={task}
+              updateAction={updateAction}
+              onDone={() => setIsEditing(false)}
+            />
+          ) : (
+            <div
+              className={cn(
+                "flex flex-col gap-2",
+                isDeleting && "opacity-50",
+              )}
             >
-              編集
-            </button>
-            <button
-              type="button"
-              aria-label={`「${task.title}」を削除`}
-              onClick={() => setIsConfirming(true)}
-              disabled={isDeleting}
-              className="rounded px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950"
-            >
-              {isDeleting ? "削除中…" : "削除"}
-            </button>
-          </div>
-        </div>
-      )}
+              <div className="flex items-start gap-2">
+                <h3 className="min-w-0 flex-1 font-medium leading-snug break-words">
+                  {task.title}
+                </h3>
+                <div className="-mt-1 -mr-1 flex shrink-0 gap-0.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`「${task.title}」を編集`}
+                    onClick={() => setIsEditing(true)}
+                    disabled={isDeleting}
+                    className="text-muted-foreground"
+                  >
+                    <PencilIcon aria-hidden="true" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`「${task.title}」を削除`}
+                    onClick={() => setIsConfirming(true)}
+                    disabled={isDeleting}
+                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    {isDeleting ? (
+                      <Loader2Icon className="animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Trash2Icon aria-hidden="true" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+              {task.description && (
+                <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                  {task.description}
+                </p>
+              )}
+              {isDeleting && (
+                <p className="text-xs text-muted-foreground" aria-live="polite">
+                  削除中…
+                </p>
+              )}
+              {deleteState.error && (
+                <Alert variant="destructive">
+                  <AlertCircleIcon aria-hidden="true" />
+                  <AlertTitle>{deleteState.error}</AlertTitle>
+                </Alert>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
       {isConfirming && (
         <ConfirmDialog
           title="タスクの削除"
@@ -105,6 +155,9 @@ type TaskEditFormProps = {
 };
 
 function TaskEditForm({ task, updateAction, onDone }: TaskEditFormProps) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const statusId = useId();
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
   const [status, setStatus] = useState(task.status);
@@ -121,68 +174,62 @@ function TaskEditForm({ task, updateAction, onDone }: TaskEditFormProps) {
   );
 
   return (
-    <form action={formAction} className="flex flex-col gap-2 text-sm">
+    <form action={formAction} className="flex flex-col gap-3">
       <input type="hidden" name="id" value={task.id} />
-      <label className="flex flex-col gap-1">
-        タイトル
-        <input
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={titleId}>タイトル</Label>
+        <Input
+          id={titleId}
           name="title"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
           maxLength={titleMaxLength}
-          className="rounded border border-zinc-300 px-2 py-1 dark:border-zinc-600 dark:bg-zinc-800"
         />
-      </label>
-      <label className="flex flex-col gap-1">
-        説明
-        <textarea
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={descriptionId}>説明</Label>
+        <Textarea
+          id={descriptionId}
           name="description"
           value={description}
           onChange={(event) => setDescription(event.target.value)}
           maxLength={descriptionMaxLength}
           rows={3}
-          className="rounded border border-zinc-300 px-2 py-1 dark:border-zinc-600 dark:bg-zinc-800"
         />
-      </label>
-      <label className="flex flex-col gap-1">
-        ステータス
-        <select
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={statusId}>ステータス</Label>
+        <NativeSelect
+          id={statusId}
           name="status"
           value={status}
           onChange={(event) => {
             const { value } = event.target;
             if (isTaskStatus(value)) setStatus(value);
           }}
-          className="rounded border border-zinc-300 px-2 py-1 dark:border-zinc-600 dark:bg-zinc-800"
+          className="w-full"
         >
           {taskStatuses.map((value) => (
-            <option key={value} value={value}>
+            <NativeSelectOption key={value} value={value}>
               {taskStatusLabels[value]}
-            </option>
+            </NativeSelectOption>
           ))}
-        </select>
-      </label>
+        </NativeSelect>
+      </div>
       {state.error && (
-        <p role="alert" className="text-red-600">
-          {state.error}
-        </p>
+        <Alert variant="destructive">
+          <AlertCircleIcon aria-hidden="true" />
+          <AlertTitle>{state.error}</AlertTitle>
+        </Alert>
       )}
       <div className="flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={onDone}
-          disabled={isPending}
-          className="rounded px-2 py-1 hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
-        >
+        <Button type="button" variant="ghost" onClick={onDone} disabled={isPending}>
           キャンセル
-        </button>
-        <button
-          type="submit"
-          disabled={isPending}
-          className="rounded bg-zinc-900 px-3 py-1 font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-        >
+        </Button>
+        <Button type="submit" disabled={isPending}>
+          {isPending && <Loader2Icon className="animate-spin" aria-hidden="true" />}
           {isPending ? "保存中…" : "保存"}
-        </button>
+        </Button>
       </div>
     </form>
   );
