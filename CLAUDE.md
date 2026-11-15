@@ -19,6 +19,7 @@ Next.ja + Supabase で構築し、Vercel にデプロイする。
 | UI | React 19.3 |
 | 言語 | TypeScript 5.9（strict） |
 | スタイリング | Tailwind CSS 4.3（`@tailwindcss/turbopack`） |
+| UI コンポーネント | shadcn/ui（CLI 4.23、スタイル `base-nova`、プリミティブは `@base-ui/react`、アイコンは `lucide-react`） |
 | フォント | Geist / Geist Mono（`next/font/google`） |
 | データベース | Supabase（`@supabase/supabase-js`、`@supabase/ssr`） |
 | Lint | ESLint 9（`eslint-config-next`） |
@@ -53,13 +54,17 @@ task-kanban/
 │   │   │   ├── task-create-form.tsx   # 追加フォーム（Client）
 │   │   │   ├── task-card.tsx          # カード表示 ⇄ 編集フォーム、削除（Client）
 │   │   │   └── confirm-dialog.tsx     # 削除前の確認ダイアログ（Client）
-│   │   └── globals.css    # Tailwind の読み込みとテーマトークン
+│   │   └── globals.css    # Tailwind・shadcn の読み込みとテーマトークン
+│   ├── components/
+│   │   └── ui/            # shadcn/ui のコンポーネント（CLI で追加。例: button.tsx）
 │   ├── lib/
 │   │   ├── supabase/      # Supabase クライアント・接続確認・生成型（後述）
-│   │   └── tasks/         # タスクの型・入力検証・取得処理（types / validation / queries）
+│   │   ├── tasks/         # タスクの型・入力検証・取得処理（types / validation / queries）
+│   │   └── utils.ts       # `cn()`（`cn` パッケージの再エクスポート）
 │   └── instrumentation.ts # サーバー起動時フック（Supabase 接続確認）
 ├── public/                # 静的ファイル（/ 直下で配信）
 ├── .env.example           # 環境変数のキー一覧（値は .env.local に書く）
+├── components.json        # shadcn/ui の設定（スタイル・エイリアス・CSS の場所）
 ├── next.config.ts         # Next.js 設定（Cache Components、Turbopack ルール）
 ├── vitest.config.mts      # Vitest 設定
 ├── vitest.setup.ts        # テスト共通セットアップ（jest-dom）
@@ -77,6 +82,16 @@ task-kanban/
 - **Partial Prefetching 有効**（`partialPrefetching: true`）。`<Link>` はデフォルトでルートの静的部分のみプリフェッチする。`cacheComponents` を外すと設定検証でエラーになる。
 - **Tailwind CSS v4 は Turbopack ローダー経由**（`@tailwindcss/turbopack`、`next.config.ts` の `turbopack.rules`）。PostCSS 設定ファイルはない。テーマトークンは `src/app/globals.css` の `@theme inline` で CSS 変数から定義。
 - レイアウトの props 型には Next.js が自動生成するグローバル型 `LayoutProps<"/">` を使っている（`src/app/layout.tsx`）。
+
+## shadcn/ui
+
+- **設定**: `components.json`（`style: "base-nova"`、`baseColor: "neutral"`、`cssVariables: true`、`iconLibrary: "lucide"`、`rsc: true`）。Tailwind v4 なので `tailwind.config` は空。初期化は `npx shadcn@latest init -d --no-monorepo` で行った。
+- **コンポーネントの追加**: `npx shadcn@latest add <name>`。出力先は `src/components/ui/`（エイリアス `@/components/ui`）。生成コードは自分たちのコードとして扱い、必要なら直接編集してよい。追加前に Context7 で該当コンポーネントの最新ドキュメントを確認する。
+- **プリミティブは Base UI**（`@base-ui/react`）。Radix ではないので、Radix 前提の API（`asChild` など）で書かない。Base UI 版の書き方（例: `render` prop）をドキュメントで確認する。
+- **`cn()`**: クラス結合は `@/lib/utils` の `cn()` を使う。中身は `cn` パッケージ（shadcn 公式。`clsx` + `tailwind-merge` の後継）の再エクスポート。生成コンポーネントは `cn` パッケージを直接 import している。
+- **テーマ**: `src/app/globals.css` が `tw-animate-css` と `shadcn/tailwind.css` を読み込み、`:root` / `.dark` に色の CSS 変数（oklch）、`@theme inline` で `--color-*` に割り当てている。色は `bg-background` / `text-foreground` / `bg-primary` などのトークンで指定し、生の色値を直書きしない。ダークモードは `.dark` クラス方式（`@custom-variant dark`）。
+- **フォント変数の注意**: CLI は `--font-sans: var(--font-sans)`（自己参照）を書き出すが、`layout.tsx` が定義するのは `--font-geist-sans`。`@theme inline` では `--font-sans` / `--font-heading` を `var(--font-geist-sans)` にしてある。`init` や `add` で `globals.css` が上書きされたら、ここを確認する。
+- **既存コンポーネント**（`src/app/_components/`）は、まだ shadcn/ui に置き換えていない。
 
 ## タスク機能の設計（データの流れ）
 
