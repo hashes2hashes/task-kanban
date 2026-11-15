@@ -44,11 +44,19 @@ task-kanban/
 ├── src/
 │   ├── app/               # App Router（ルーティング = ディレクトリ構成）
 │   │   ├── layout.tsx     # ルートレイアウト（フォント・globals.css の読み込み）
-│   │   ├── page.tsx       # トップページ（/）
+│   │   ├── page.tsx       # トップページ（/）。見出し + <Suspense> 内でカンバンを描画
 │   │   ├── page.test.tsx  # page.tsx のテスト（テストは対象の隣に置く）
+│   │   ├── actions.ts     # タスクの Server Action（createTask / updateTask / deleteTask）
+│   │   ├── _components/   # ページ専用コンポーネント（_ 付きはルーティング対象外）
+│   │   │   ├── task-board-loader.tsx  # async Server Component。取得してボードに渡す
+│   │   │   ├── kanban-board.tsx       # 3 列のボード（Client）
+│   │   │   ├── task-create-form.tsx   # 追加フォーム（Client）
+│   │   │   ├── task-card.tsx          # カード表示 ⇄ 編集フォーム、削除（Client）
+│   │   │   └── confirm-dialog.tsx     # 削除前の確認ダイアログ（Client）
 │   │   └── globals.css    # Tailwind の読み込みとテーマトークン
 │   ├── lib/
-│   │   └── supabase/      # Supabase クライアントと接続確認（後述）
+│   │   ├── supabase/      # Supabase クライアント・接続確認・生成型（後述）
+│   │   └── tasks/         # タスクの型・入力検証・取得処理（types / validation / queries）
 │   └── instrumentation.ts # サーバー起動時フック（Supabase 接続確認）
 ├── public/                # 静的ファイル（/ 直下で配信）
 ├── .env.example           # 環境変数のキー一覧（値は .env.local に書く）
@@ -70,6 +78,18 @@ task-kanban/
 - **Tailwind CSS v4 は Turbopack ローダー経由**（`@tailwindcss/turbopack`、`next.config.ts` の `turbopack.rules`）。PostCSS 設定ファイルはない。テーマトークンは `src/app/globals.css` の `@theme inline` で CSS 変数から定義。
 - レイアウトの props 型には Next.js が自動生成するグローバル型 `LayoutProps<"/">` を使っている（`src/app/layout.tsx`）。
 
+## タスク機能の設計（データの流れ）
+
+- **一覧取得**: `page.tsx` → `<Suspense>` → `TaskBoardLoader`（async Server Component）→ `getTasks()`（`src/lib/tasks/queries.ts`）。
+  サーバーの Supabase クライアントは `cookies()` を使うので、`<Suspense>` の外で取得すると Cache Components のビルドで blocking-route エラーになる。データは `use cache` していない（毎リクエスト取得）。
+- **try/catch で `cookies()` を囲まない**: プリレンダー中、Next.js は `cookies()` の Promise を reject してレンダーを止める。これを catch すると build 時に `HANGING_PROMISE_REJECTION` が出る。そのため `getTasks()` は例外を投げず、`{ ok: true, tasks } | { ok: false, reason }` を返す。DB エラーも同様に、例外ではなく結果の値で扱う。
+- **変更（追加・編集・削除）**: `src/app/actions.ts` の Server Action。シグネチャは `useActionState` 形式の `(prevState: ActionState, formData: FormData) => Promise<ActionState>`、`ActionState = { error: string | null }`。検証 → Supabase → 成功時に `next/cache` の `refresh()`。これで一覧がすぐ更新される。失敗時は例外を投げず、日本語のエラー文言を返す。
+- **Server Action は props で渡す**: `TaskBoardLoader` が `createTask` などを `KanbanBoard` に props（型 `TaskAction`、`task-card.tsx`）で渡す。Client Component は `@/app/actions` を直接 import しない。テストで `vi.fn()` を注入するため。
+- **入力検証は `parseTaskForm()`（`src/lib/tasks/validation.ts`）に一本化**。Client 側（即時のエラー表示）と Server Action 側の両方で同じ関数を使う。上限値は `src/lib/tasks/types.ts` の `titleMaxLength`（100）/ `descriptionMaxLength`（1000）。文字数はコードポイント単位で数える（DB の `char_length` と同じ）。
+- **フォームは controlled（`useState`）で値を保持**。React 19 の `<form action>` は送信後に uncontrolled な入力をリセットする。controlled にしておけば、エラー時も入力が残り、成功時だけ自分で空にできる。
+- **ステータス**: `taskStatuses` / `taskStatusLabels` / `isTaskStatus()`（`types.ts`）を使う。文字列を `as TaskStatus` でキャストせず、型ガードで絞る。DB の `status` は `text` なので、`getTasks()` が定義外の値の行を除外する。
+- **削除**: `ConfirmDialog`（`role="alertdialog"`、初期フォーカスはキャンセル、Esc でキャンセル）で確認してから `deleteTask` を実行する。
+
 ## Supabase
 
 - **プロジェクト**: `task-kanban`（ref: `sdtdbhubjlwxdmixgaeh`、ap-southeast-2、Postgres 17）。Supabase MCP のツールではこの ref を `project_id` に指定する。
@@ -82,14 +102,32 @@ task-kanban/
 - **起動時の接続確認**: `src/instrumentation.ts` の `register()`（Node.js ランタイムのみ）が `checkSupabaseConnection()` を呼ぶ。この関数は、テーブルに依存しない `/auth/v1/health` に API キーを付けて叩き、URL とキーの両方を検証する（タイムアウト 5 秒）。**失敗時のみ** `console.error` でログを出し、成功時は何も出さない。
 - **接続確認の結果型**: `checkSupabaseConnection()` は例外を投げず、`{ ok: true, url } | { ok: false, reason }` を返す。
 - **テスト**: 環境変数は `vi.stubEnv`、通信は `vi.stubGlobal("fetch", ...)` でモックする。後片付けは `afterEach` で `vi.unstubAllEnvs()` / `vi.unstubAllGlobals()`（例: `src/lib/supabase/check-connection.test.ts`）。
-- **スキーマ変更**: Supabase MCP の `apply_migration` で行う。変更の前に `list_tables` で現状を確認する。型が必要になったら `generate_typescript_types` で生成する。
+- **スキーマ変更**: Supabase MCP の `apply_migration` で行う。変更の前に `list_tables` で現状を確認する。適用後は `get_advisors`（security）で警告がないか確認する。
+- **型**: `generate_typescript_types` の出力を `src/lib/supabase/database.types.ts` にそのまま保存する（手で編集しない）。`server.ts` / `client.ts` は `<Database>` ジェネリクス付きで生成する。スキーマを変えたら型も生成し直す。行の型は `Tables<"tasks">` を使う。
+- **テーブル `public.tasks`**（適用済みマイグレーション: `create_tasks_table`、`grant_tasks_to_api_roles`）:
+
+  | 列 | 型・制約 |
+  | --- | --- |
+  | `id` | `uuid` PK、`gen_random_uuid()` |
+  | `title` | `text not null`、前後空白を除いて 1〜100 文字（check） |
+  | `description` | `text not null default ''`、1000 文字以内（check） |
+  | `status` | `text not null default 'todo'`、`'todo' \| 'in_progress' \| 'done'`（check。enum 型ではない） |
+  | `created_at` / `updated_at` | `timestamptz`。`updated_at` は trigger `tasks_set_updated_at`（関数 `public.set_updated_at()`）で自動更新 |
+
+  制約を変えるときは、DB の check と `validation.ts` / `types.ts` の両方を揃える。
+- **テーブル作成時は GRANT も必要**: このプロジェクトでは、新しいテーブルに API ロールの権限が自動で付かない。RLS ポリシーだけだと `permission denied for table ...` になるので、`grant select, insert, update, delete on table ... to anon, authenticated;` を必ず一緒に書く。
+- **RLS（暫定）**: 認証が未導入のため、`tasks` のポリシーは `anon` / `authenticated` に全操作を許可している（publishable キーがあれば誰でも読み書きできる）。認証を導入したら `user_id` 列を追加し、`auth.uid()` でポリシーを絞る。
+- **関数を作るとき**は `set search_path = ''` を付ける（advisor の警告を防ぐ）。
 
 ## テスト
 
 - Vitest 5 + React Testing Library + jsdom。設定は `vitest.config.mts`（`@/` は `resolve.tsconfigPaths: true` で解決、`vite-tsconfig-paths` プラグインは不要）。
 - `vitest.setup.ts` で `@testing-library/jest-dom/vitest` を読み込み済み（`toBeInTheDocument()` 等が使える）。
 - テストは `src/**/*.test.{ts,tsx}` に対象ファイルと並べて配置する。
-- `async` Server Component は Vitest では未対応。そうした部分は E2E テストで検証する（`docs/01-app/02-guides/testing/`）。
+- `async` Server Component は Vitest では未対応。そうした部分は E2E テストで検証する（`docs/01-app/02-guides/testing/`）。`page.test.tsx` では `vi.mock("./_components/task-board-loader")` で差し替えて、見出しだけを検証している。
+- 操作は `@testing-library/user-event`（`userEvent.setup()`）で書く。要素はロールとアクセシブルネームで取る（例: `getByRole("region", { name: "Todo" })`、`getByRole("button", { name: "「買い物」を編集" })`）。
+- **Server Action・取得処理のテスト**（`src/app/actions.test.ts`、`src/lib/tasks/queries.test.ts`）: `vi.hoisted` + `vi.mock` で `@/lib/supabase/server` の `createClient` と `next/cache` の `refresh` をモックする。Supabase は、呼び出しを記録して `then` で結果を返すフェイクのクエリビルダーで代用する。エラー時のログは `vi.spyOn(console, "error")` で抑える。
+- **コンポーネントのテスト**: Server Action は props で注入した `vi.fn<TaskAction>()` で代用し、送信内容は `mock.calls[0][1]`（FormData）で検証する。
 
 ## コーディングルール
 - 変更後は必ず `npm test` でテストが通ることを確認してください
