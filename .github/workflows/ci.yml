@@ -1,0 +1,48 @@
+# main への push と PR のたびに、lint・型チェック・テストを実行する。
+# テストは Supabase や通信をモックしているので、シークレットは不要。
+# ビルドは Vercel が行うため、ここでは実行しない。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# リポジトリの読み取りだけを許可する（最小権限）。
+permissions:
+  contents: read
+
+# 同じブランチ・PR で新しい実行が始まったら、古い実行は取り消す。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint・型チェック・テスト
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: 依存パッケージのインストール
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # PageProps / LayoutProps などのルート型は .next/types に生成され、git 管理外。
+      # 生成しないと型チェックが「Cannot find name 'PageProps'」で失敗する。
+      - name: ルート型の生成
+        run: npx next typegen
+
+      - name: 型チェック
+        run: npx tsc --noEmit
+
+      - name: テスト
+        run: npm run test:run
