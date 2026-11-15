@@ -33,10 +33,12 @@ Next.js + Supabase で構築し、Vercel にデプロイする。
 - `npm run dev` — 開発サーバー（http://localhost:3000）
 - `npm run build` — 本番ビルド
 - `npm run lint` — ESLint（flat config、`eslint-config-next` の core-web-vitals + typescript）
-- `npx tsc --noEmit` — 型チェック（専用スクリプトなし）
+- `npx tsc --noEmit` — 型チェック（専用スクリプトなし）。clone 直後は `PageProps` などのルート型（`.next/types`、git 管理外）がないので、先に `npx next typegen` を実行する
 - `npm test` — Vitest をウォッチモードで実行
 - `npm run test:run` — Vitest を1回だけ実行（CI 向け）
 - 単一テスト: `npx vitest run src/app/page.test.tsx`、テスト名で絞るなら `npx vitest run -t "見出し"`
+
+**CI**（`.github/workflows/ci.yml`、GitHub Actions）: `main` への push と PR で `npm ci` → lint → `next typegen` → 型チェック → `test:run` を実行する。ビルドは Vercel が行うので CI では実行しない。テストは外部をモックしているので、シークレットは登録していない。新しいチェックを足すときは、ローカルと CI の両方で同じコマンドを使う。
 
 ## ディレクトリ構成
 
@@ -81,6 +83,7 @@ task-kanban/
 ├── vitest.setup.ts        # テスト共通セットアップ（jest-dom）
 ├── eslint.config.mjs      # ESLint flat config
 ├── tsconfig.json          # TypeScript 設定（@/* → ./src/*）
+├── .github/workflows/ci.yml  # CI（lint・型チェック・テスト）
 └── AGENTS.md              # next dev が自動生成するエージェント向け注意書き
 ```
 
