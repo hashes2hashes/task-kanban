@@ -2,7 +2,12 @@
 
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { parseCredentialsForm } from "@/lib/auth/validation";
+import { getSignedInUser } from "@/lib/auth/session";
+import {
+  parseCredentialsForm,
+  parseEmailForm,
+  parseNewPasswordForm,
+} from "@/lib/auth/validation";
 import { createClient } from "@/lib/supabase/server";
 
 export type AuthActionState = { error: string | null; message: string | null };
@@ -43,13 +48,11 @@ export async function signUp(
   const parsed = parseCredentialsForm(formData);
   if (!parsed.ok) return { error: parsed.error, message: null };
 
-  // 確認後の戻り先を、今開いているサイト（localhost / 本番）の /auth/confirm にする。
-  // この URL は Supabase の Redirect URLs に登録が必要（未登録だと Site URL に戻される）。
-  const origin = (await headers()).get("origin");
+  const confirmUrl = await getConfirmUrl();
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({
     ...parsed.data,
-    options: origin ? { emailRedirectTo: `${origin}/auth/confirm` } : undefined,
+    options: confirmUrl ? { emailRedirectTo: confirmUrl } : undefined,
   });
   if (error) {
     console.error("新規登録に失敗しました:", error.message);
@@ -70,6 +73,79 @@ export async function signUp(
   redirect("/");
 }
 
+/**
+ * パスワード再設定のメールを送る。メールアドレスが登録済みかどうかは明かさない
+ * （Supabase も未登録のアドレスでエラーを返さない）。
+ */
+export async function requestPasswordReset(
+  _prevState: AuthActionState,
+  formData: FormData,
+): Promise<AuthActionState> {
+  const parsed = parseEmailForm(formData);
+  if (!parsed.ok) return { error: parsed.error, message: null };
+
+  const confirmUrl = await getConfirmUrl();
+  const supabase = await createClient();
+  // PKCE の code verifier が Cookie に保存され、/auth/confirm で再設定用のリンクだと判別できる。
+  const { error } = await supabase.auth.resetPasswordForEmail(
+    parsed.data.email,
+    confirmUrl ? { redirectTo: confirmUrl } : undefined,
+  );
+  if (error) {
+    console.error("パスワード再設定メールの送信に失敗しました:", error.message);
+    if (error.code === "over_email_send_rate_limit") {
+      return {
+        error: "メールの送信回数が上限に達しました。しばらく待ってから再度お試しください",
+        message: null,
+      };
+    }
+    return {
+      error: "メールを送信できませんでした。時間をおいて再度お試しください",
+      message: null,
+    };
+  }
+
+  return {
+    error: null,
+    message:
+      "登録済みのメールアドレスであれば、再設定用のメールを送信しました。メールのリンクを開いてください",
+  };
+}
+
+/** ログイン中のユーザーのパスワードを変更する（再設定用のリンクでログインした後に使う）。 */
+export async function updatePassword(
+  _prevState: AuthActionState,
+  formData: FormData,
+): Promise<AuthActionState> {
+  const parsed = parseNewPasswordForm(formData);
+  if (!parsed.ok) return { error: parsed.error, message: null };
+
+  const supabase = await createClient();
+  if (!(await getSignedInUser(supabase))) {
+    return {
+      error: "ログインが必要です。もう一度、再設定用のメールを申請してください",
+      message: null,
+    };
+  }
+
+  const { error } = await supabase.auth.updateUser({ password: parsed.data.password });
+  if (error) {
+    console.error("パスワードの変更に失敗しました:", error.message);
+    if (error.code === "same_password") {
+      return { error: "現在と同じパスワードは使えません。別のパスワードを入力してください", message: null };
+    }
+    if (error.code === "weak_password") {
+      return { error: "パスワードが弱すぎます。別のパスワードを入力してください", message: null };
+    }
+    return {
+      error: "パスワードを変更できませんでした。時間をおいて再度お試しください",
+      message: null,
+    };
+  }
+
+  redirect("/");
+}
+
 export async function signOut(): Promise<void> {
   const supabase = await createClient();
   const { error } = await supabase.auth.signOut();
@@ -77,4 +153,14 @@ export async function signOut(): Promise<void> {
     console.error("ログアウトに失敗しました:", error.message);
   }
   redirect("/login");
+}
+
+/**
+ * 確認メール・再設定メールのリンクの戻り先。今開いているサイト（localhost / 本番）の /auth/confirm。
+ * この URL は Supabase の Redirect URLs に登録が必要（未登録だと Site URL に戻される）。
+ * Origin ヘッダーがなければ null（Supabase の Site URL に任せる）。
+ */
+async function getConfirmUrl(): Promise<string | null> {
+  const origin = (await headers()).get("origin");
+  return origin ? `${origin}/auth/confirm` : null;
 }

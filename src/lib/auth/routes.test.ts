@@ -31,4 +31,20 @@ describe("getAuthRedirect", () => {
   it("ログイン済みで /auth/ 配下を開くと、リダイレクトしない", () => {
     expect(getAuthRedirect("/auth/confirm", true)).toBeNull();
   });
+
+  it("未ログインでパスワード再設定の申請画面を開くと、リダイレクトしない", () => {
+    expect(getAuthRedirect("/forgot-password", false)).toBeNull();
+  });
+
+  it("ログイン済みでパスワード再設定の申請画面を開くと、トップへリダイレクトする", () => {
+    expect(getAuthRedirect("/forgot-password", true)).toBe("/");
+  });
+
+  it("未ログインで新しいパスワードの入力画面を開くと、/login へリダイレクトする", () => {
+    expect(getAuthRedirect("/reset-password", false)).toBe("/login");
+  });
+
+  it("ログイン済みで新しいパスワードの入力画面を開くと、リダイレクトしない", () => {
+    expect(getAuthRedirect("/reset-password", true)).toBeNull();
+  });
 });

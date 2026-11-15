@@ -7,9 +7,27 @@ import { GET } from "./route";
 const { createClientMock } = vi.hoisted(() => ({ createClientMock: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: createClientMock }));
 
-function createFakeAuth(error: { message: string } | null = null) {
+type AuthEventListener = (event: string) => void;
+
+/** isRecovery なら、code の交換時に PASSWORD_RECOVERY を通知する（再設定用のリンクの再現）。 */
+function createFakeAuth(
+  error: { message: string } | null = null,
+  { isRecovery = false }: { isRecovery?: boolean } = {},
+) {
+  const listeners: AuthEventListener[] = [];
+  const unsubscribe = vi.fn();
   const auth = {
-    exchangeCodeForSession: vi.fn().mockResolvedValue({ data: {}, error }),
+    onAuthStateChange: vi.fn((listener: AuthEventListener) => {
+      listeners.push(listener);
+      return { data: { subscription: { unsubscribe } } };
+    }),
+    exchangeCodeForSession: vi.fn(async () => {
+      if (!error) {
+        listeners.forEach((listener) => listener(isRecovery ? "PASSWORD_RECOVERY" : "SIGNED_IN"));
+      }
+      return { data: {}, error };
+    }),
+    unsubscribe,
     verifyOtp: vi.fn().mockResolvedValue({ data: {}, error }),
   };
   createClientMock.mockResolvedValue({ auth });
@@ -43,6 +61,16 @@ describe("GET /auth/confirm", () => {
     expect(redirectedTo(response)).toBe("http://localhost:3000/");
   });
 
+  it("再設定メールのリンク（code 付き）だと、セッションに交換して新しいパスワードの入力画面へリダイレクトする", async () => {
+    const auth = createFakeAuth(null, { isRecovery: true });
+
+    const response = await GET(requestTo("?code=abc"));
+
+    expect(auth.exchangeCodeForSession).toHaveBeenCalledWith("abc");
+    expect(redirectedTo(response)).toBe("http://localhost:3000/reset-password");
+    expect(auth.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
   it("code の交換に失敗すると、ログイン画面へ確認エラー付きでリダイレクトする", async () => {
     createFakeAuth({ message: "invalid flow state" });
 
@@ -58,6 +86,15 @@ describe("GET /auth/confirm", () => {
 
     expect(auth.verifyOtp).toHaveBeenCalledWith({ type: "email", token_hash: "hash" });
     expect(redirectedTo(response)).toBe("http://localhost:3000/");
+  });
+
+  it("type=recovery の token_hash 付きだと、新しいパスワードの入力画面へリダイレクトする", async () => {
+    const auth = createFakeAuth();
+
+    const response = await GET(requestTo("?token_hash=hash&type=recovery"));
+
+    expect(auth.verifyOtp).toHaveBeenCalledWith({ type: "recovery", token_hash: "hash" });
+    expect(redirectedTo(response)).toBe("http://localhost:3000/reset-password");
   });
 
   it("verifyOtp に失敗すると、ログイン画面へ確認エラー付きでリダイレクトする", async () => {
